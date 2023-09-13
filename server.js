@@ -1,97 +1,89 @@
 const express = require('express');
-const mongoose = require('mongoose');
-const app = express(); // Create an Express application instance
+const sqlite3 = require('sqlite3').verbose(); // Import the sqlite3 module
+const app = express();
+const port = process.env.PORT || 3000;
 
-// Middleware to parse JSON requests (should be placed before routes)
+// Create an SQLite database connection (in-memory for testing)
+const db = new sqlite3.Database(':memory:'); // For in-memory database
+// You can use a file-based database by specifying a file path:
+// const db = new sqlite3.Database('my-database.db');
+
 app.use(express.json());
 
-// mongoose connection
-mongoose.connect('mongodb+srv://kimurgorbrian20:6979samz.@cluster0.pk6oubr.mongodb.net/', { useNewUrlParser: true, useUnifiedTopology: true })
-  .then(() => {
-    console.log('Connected to the database');
-  })
-  .catch((error) => {
-    console.error('Error connecting to the database:', error);
-  });
-
-// person model
-const personSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  age: { type: Number, required: true },
-  email: { type: String, required: true, unique: true },
+// Create a person table
+db.serialize(() => {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS person (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
+      age INTEGER,
+      email TEXT UNIQUE
+    )
+  `);
 });
 
-const Person = mongoose.model('Person', personSchema);
+// Define your routes and handlers here
 
-// routes and handlers
 // Create a new person
 app.post('/api/person', (req, res) => {
   const { name, age, email } = req.body;
-  const newPerson = new Person({ name, age, email }); // Create a new instance of the Person model
-
-  newPerson.save()
-    .then((person) => {
-      res.status(201).json(person);
-    })
-    .catch((error) => {
-      res.status(500).json({ error: 'Failed to create person' });
-    });
+  db.run(
+    'INSERT INTO person (name, age, email) VALUES (?, ?, ?)',
+    [name, age, email],
+    function (err) {
+      if (err) {
+        return res.status(500).json({ error: 'Failed to create person' });
+      }
+      res.status(201).json({ id: this.lastID, name, age, email });
+    }
+  );
 });
 
 // Retrieve details of a person
 app.get('/api/person/:id', (req, res) => {
   const { id } = req.params;
-
-  Person.findById(id)
-    .then((person) => {
-      if (!person) {
-        res.status(404).json({ error: 'Person not found' });
-      } else {
-        res.status(200).json(person);
-      }
-    })
-    .catch((error) => {
-      res.status(500).json({ error: 'Failed to retrieve person' });
-    });
+  db.get('SELECT * FROM person WHERE id = ?', [id], (err, person) => {
+    if (err) {
+      return res.status(500).json({ error: 'Failed to retrieve person' });
+    }
+    if (!person) {
+      return res.status(404).json({ error: 'Person not found' });
+    }
+    res.status(200).json(person);
+  });
 });
 
 // Modify details of an existing person
 app.put('/api/person/:id', (req, res) => {
   const { id } = req.params;
   const updatedPerson = req.body;
-
-  Person.findByIdAndUpdate(id, updatedPerson, { new: true })
-    .then((person) => {
-      if (!person) {
-        res.status(404).json({ error: 'Person not found' });
-      } else {
-        res.status(200).json(person);
+  db.run(
+    'UPDATE person SET name = ?, age = ?, email = ? WHERE id = ?',
+    [updatedPerson.name, updatedPerson.age, updatedPerson.email, id],
+    (err) => {
+      if (err) {
+        return res.status(500).json({ error: 'Failed to update person' });
       }
-    })
-    .catch((error) => {
-      res.status(500).json({ error: 'Failed to update person' });
-    });
+      res.status(200).json({ id, ...updatedPerson });
+    }
+  );
 });
 
 // Remove a person
 app.delete('/api/person/:id', (req, res) => {
   const { id } = req.params;
-
-  Person.findByIdAndRemove(id)
-    .then((person) => {
-      if (!person) {
-        res.status(404).json({ error: 'Person not found' });
-      } else {
-        res.status(200).json({ message: 'Person removed successfully' });
-      }
-    })
-    .catch((error) => {
-      res.status(500).json({ error: 'Failed to remove person' });
-    });
+  db.run('DELETE FROM person WHERE id = ?', [id], (err) => {
+    if (err) {
+      return res.status(500).json({ error: 'Failed to remove person' });
+    }
+    res.status(200).json({ message: 'Person removed successfully' });
+  });
 });
 
-const port = process.env.PORT || 3000;
+// Export the Express app for testing
+module.exports = app;
 
+// Start the server
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
